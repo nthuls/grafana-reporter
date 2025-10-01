@@ -1,0 +1,623 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto bg-white dark:bg-gray-800 shadow-md rounded-lg" x-data="wizardApp()" x-cloak>
+    <!-- Wizard header -->
+    <div class="bg-gray-100 dark:bg-gray-700 rounded-t-lg px-6 py-4">
+        <h2 class="text-xl font-semibold text-gray-800 dark:text-white">Create Security Report</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-300 mt-1">Export data from Grafana dashboards into a comprehensive Excel report</p>
+    </div>
+    
+    <!-- Progress bar -->
+    <div class="px-6 pt-4">
+        <div class="relative pt-1">
+            <div class="flex mb-2 items-center justify-between">
+                <div>
+                    <span class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-primary-600 bg-primary-100 dark:bg-primary-900 dark:text-primary-200">
+                        Progress
+                    </span>
+                </div>
+                <div class="text-right">
+                    <span class="text-xs font-semibold inline-block text-primary-600 dark:text-primary-200">
+                        Step <span x-text="currentStep"></span> of 5
+                    </span>
+                </div>
+            </div>
+            <div class="overflow-hidden h-2 mb-4 text-xs flex rounded bg-primary-100 dark:bg-gray-600">
+                <div x-bind:style="'width: ' + ((currentStep / 5) * 100) + '%'" class="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-primary-500"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Steps navigation -->
+    <div class="px-6 pb-4 border-b dark:border-gray-700">
+        <div class="flex flex-wrap -mx-2">
+            <template x-for="step in 5" :key="step">
+                <div class="px-2 flex-1 min-w-[120px] mb-2">
+                    <button 
+                        x-on:click="goToStep(step)" 
+                        x-bind:class="{'bg-primary-500 text-white': currentStep === step, 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300': currentStep !== step, 'opacity-60 cursor-not-allowed': step > highestStep}"
+                        x-bind:disabled="step > highestStep"
+                        class="w-full py-2 rounded text-center text-sm font-medium transition-colors duration-200"
+                    >
+                        <span x-text="getStepName(step)"></span>
+                    </button>
+                </div>
+            </template>
+        </div>
+    </div>
+    
+    <!-- Step content -->
+    <div class="p-6">
+        <!-- Step 1: Select Dashboards & Panels -->
+        <div x-show="currentStep === 1" class="space-y-6">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-white">Select Dashboards & Panels</h3>
+            <p class="text-gray-600 dark:text-gray-300 mb-4">
+                Choose one or more Grafana dashboards and select the panels you want to include in your report.
+            </p>
+
+            <!-- Dashboard Selection -->
+            <!-- Dashboard Selection -->
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Dashboards
+                    </label>
+                    <div class="relative border rounded-md p-3 bg-white dark:bg-gray-700 dark:border-gray-600 max-h-60 overflow-y-auto">
+                        <template x-for="dashboard in dashboards" :key="dashboard.uid">
+                            <label class="flex items-center space-x-2 py-1 cursor-pointer">
+                                <input 
+                                    type="checkbox" 
+                                    :value="dashboard.uid"
+                                    x-model="formData.selectedDashboards"
+                                    @change="handleDashboardSelection(dashboard.uid, formData.selectedDashboards.includes(dashboard.uid))"
+                                    class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                                    :disabled="loading.dashboards"
+                                >
+                                <span class="text-sm text-gray-700 dark:text-gray-300" x-text="dashboard.title"></span>
+                            </label>
+                        </template>
+
+                        <!-- Loading indicator -->
+                        <div x-show="loading.dashboards" class="absolute inset-y-0 right-0 flex items-center pr-3">
+                            <svg class="animate-spin h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Select one or more dashboards to include in your report.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Panels Selection per Dashboard -->
+            <template x-for="uid in formData.selectedDashboards" :key="uid">
+                <div class="mt-6 border-t pt-6 dark:border-gray-700">
+                    <!-- Dashboard loading state -->
+                    <div x-show="loading.panels[uid]" class="bg-gray-50 dark:bg-gray-700 p-6 rounded-lg text-center">
+                        <svg class="animate-spin h-8 w-8 mx-auto text-primary-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <p class="mt-2 text-gray-600 dark:text-gray-300">Loading panels for <span x-text="getDashboardTitle(uid)"></span>...</p>
+                    </div>
+
+                    <!-- Dashboard panels when loaded -->
+                    <div x-show="dashboardPanels[uid] && !loading.panels[uid]">
+                        <div class="flex justify-between items-center mb-2">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Panels from <span x-text="getDashboardTitle(uid)"></span>
+                            </label>
+                            <div class="flex space-x-2">
+                                <button 
+                                    @click="selectAllPanels(uid)" 
+                                    class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-primary-700 bg-primary-100 hover:bg-primary-200 dark:bg-primary-900 dark:text-primary-300 dark:hover:bg-primary-800"
+                                >
+                                    Select All
+                                </button>
+                                <button 
+                                    @click="deselectAllPanels(uid)" 
+                                    class="inline-flex items-center px-2 py-1 text-xs font-medium rounded text-gray-700 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                                >
+                                    Deselect All
+                                </button>
+                            </div>
+                        </div>
+                        <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <template x-for="panel in dashboardPanels[uid]" :key="panel.id">
+                                    <div 
+                                        @click="togglePanelSelection(uid, panel.id)"
+                                        class="p-3 border rounded-lg cursor-pointer transition-all duration-200 hover:shadow-md"
+                                        x-bind:class="isPanelSelected(uid, panel.id) 
+                                            ? 'border-primary-500 bg-primary-50 dark:border-primary-500 dark:bg-primary-900' 
+                                            : 'border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-800'"
+                                    >
+                                        <div class="flex items-center">
+                                            <input 
+                                                type="checkbox" 
+                                                x-bind:checked="isPanelSelected(uid, panel.id)" 
+                                                class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                                                @click.stop
+                                            >
+                                            <div class="ml-3">
+                                                <p class="text-sm font-medium text-gray-900 dark:text-white" x-text="panel.title"></p>
+                                                <div class="flex items-center mt-1">
+                                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200" x-text="panel.type"></span>
+                                                    <span x-show="panel.description" class="ml-2 text-xs text-gray-500 dark:text-gray-400 truncate" x-text="panel.description"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- No panels message -->
+                            <div x-show="dashboardPanels[uid] && dashboardPanels[uid].length === 0" class="text-center py-6">
+                                <p class="text-gray-500 dark:text-gray-400">No panels found in this dashboard.</p>
+                            </div>
+
+                            <!-- Selected panels count -->
+                            <div x-show="getSelectedPanelCount(uid) > 0" class="mt-3 text-sm text-gray-600 dark:text-gray-300">
+                                <span x-text="getSelectedPanelCount(uid)"></span> panel(s) selected 
+                                (<span x-text="getSelectedPanelsInfo(uid)"></span>)
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Total selected panels counter -->
+            <div x-show="getTotalSelectedPanelCount() > 0" class="mt-6 p-3 bg-primary-50 dark:bg-primary-900 rounded-lg border border-primary-200 dark:border-primary-800">
+                <div class="flex items-start">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-primary-500 dark:text-primary-400 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                    <div class="ml-3">
+                        <h4 class="text-sm font-medium text-primary-800 dark:text-primary-300">Selection Summary</h4>
+                        <div class="mt-1 text-sm text-primary-700 dark:text-primary-200">
+                            <p>Total dashboards: <span class="font-medium" x-text="formData.selectedDashboards.length"></span></p>
+                            <p>Total panels selected: <span class="font-medium" x-text="getTotalSelectedPanelCount()"></span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: Time Range -->
+        <div x-show="currentStep === 2" class="space-y-6">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-white">Time Range</h3>
+            <p class="text-gray-600 dark:text-gray-300 mb-4">Select the time range for data to include in your report.</p>
+            
+            <div class="space-y-4">
+                <!-- Quick time range selections -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Quick Ranges</label>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <template x-for="(range, index) in formData.quickRanges" :key="index">
+                            <div 
+                                @click="formData.selectedQuickRange = index; updateTimeRange()"
+                                class="p-3 border rounded-lg cursor-pointer transition-all duration-200 hover:shadow-md"
+                                x-bind:class="formData.selectedQuickRange === index ? 'border-primary-500 bg-primary-50 dark:border-primary-500 dark:bg-primary-900' : 'border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-800'"
+                            >
+                                <div class="flex items-center">
+                                    <input 
+                                        type="radio" 
+                                        x-bind:checked="formData.selectedQuickRange === index" 
+                                        class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded-full"
+                                        @click.stop
+                                    >
+                                    <div class="ml-3">
+                                        <p class="text-sm font-medium text-gray-900 dark:text-white" x-text="range.label"></p>
+                                        <div x-show="index < formData.quickRanges.length - 1" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                            <span x-text="range.from"></span> to <span x-text="range.to"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                
+                <!-- Custom time range input -->
+                <div x-show="formData.selectedQuickRange === formData.quickRanges.length - 1" class="border rounded-lg p-4 bg-gray-50 dark:bg-gray-700 dark:border-gray-600">
+                    <div class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Custom Time Range</div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="time_from" class="block text-sm font-medium text-gray-700 dark:text-gray-300">From</label>
+                            <input
+                                type="datetime-local"
+                                id="time_from"
+                                x-model="formData.customTimeRange.from"
+                                @change="updateTimeRange()"
+                                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                            >
+                        </div>
+                        <div>
+                            <label for="time_to" class="block text-sm font-medium text-gray-700 dark:text-gray-300">To</label>
+                            <input
+                                type="datetime-local"
+                                id="time_to"
+                                x-model="formData.customTimeRange.to"
+                                @change="updateTimeRange()"
+                                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                            >
+                        </div>
+                    </div>
+                    
+                    <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        Select specific start and end dates/times for your report data.
+                    </p>
+                </div>
+                
+                <!-- Current selection info -->
+                <div class="mt-4 p-3 bg-blue-50 dark:bg-blue-900 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <div class="flex items-start">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-500 dark:text-blue-400 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                        </svg>
+                        <div class="ml-3">
+                            <h4 class="text-sm font-medium text-blue-800 dark:text-blue-300">Current Selection</h4>
+                            <div class="mt-1 text-sm text-blue-700 dark:text-blue-200">
+                                <p>From: <span class="font-medium" x-text="formData.timeRange.from"></span></p>
+                                <p>To: <span class="font-medium" x-text="formData.timeRange.to"></span></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Step 3: Report Settings -->
+        <div x-show="currentStep === 3" class="space-y-6">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-white">Report Settings</h3>
+            <p class="text-gray-600 dark:text-gray-300 mb-4">Configure how your report will be generated and displayed.</p>
+            
+            <div class="space-y-4">
+                <div>
+                    <label for="report_title" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Report Title</label>
+                    <input 
+                        type="text" 
+                        id="report_title" 
+                        x-model="formData.reportTitle"
+                        placeholder="Security Report"
+                        class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                    >
+                </div>
+                
+                <div>
+                    <label for="company_name" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Company Name (Optional)</label>
+                    <input 
+                        type="text" 
+                        id="company_name" 
+                        x-model="formData.companyName"
+                        placeholder="Your Company"
+                        class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                    >
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Company Logo</label>
+                    <div x-show="!formData.logoPath" class="flex items-center justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-700 border-dashed rounded-md">
+                        <div class="space-y-1 text-center">
+                            <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                                <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4h-12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                            </svg>
+                            <div class="flex text-sm text-gray-600 dark:text-gray-300">
+                                <label for="file-upload" class="relative cursor-pointer bg-white dark:bg-gray-700 rounded-md font-medium text-primary-600 dark:text-primary-400 hover:text-primary-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-primary-500">
+                                    <span>Upload a file</span>
+                                    <input id="file-upload" name="file-upload" type="file" class="sr-only" @change="uploadLogo($event)" accept=".png,.jpg,.jpeg,.svg">
+                                </label>
+                                <p class="pl-1">or drag and drop</p>
+                            </div>
+                            <p class="text-xs text-gray-500 dark:text-gray-400">
+                                PNG, JPG, SVG up to 10MB
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div x-show="formData.logoPath" class="border rounded-lg overflow-hidden">
+                        <div class="bg-gray-50 dark:bg-gray-700 px-4 py-3 border-b dark:border-gray-600 flex justify-between items-center">
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Uploaded Logo</span>
+                            <button 
+                                @click="removeLogo()" 
+                                class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="p-4 flex justify-center">
+                            <img x-bind:src="formData.logoPath" class="max-h-32 max-w-full" alt="Company Logo" />
+                        </div>
+                    </div>
+                    
+                    <div x-show="loading.logo" class="mt-2 flex items-center text-sm text-gray-500 dark:text-gray-400">
+                        <svg class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Uploading...
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Step 4: Preview -->
+        <div x-show="currentStep === 4" class="space-y-6">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-white">Preview Report</h3>
+            <p class="text-gray-600 dark:text-gray-300 mb-4">Review your report configuration before generating.</p>
+            
+            <div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                <h4 class="text-base font-medium text-gray-800 dark:text-white mb-3">Report Details</h4>
+                
+                <div class="space-y-4 text-sm">
+                    <div class="grid grid-cols-3 gap-2">
+                        <div class="text-gray-600 dark:text-gray-400">Report Title:</div>
+                        <div class="col-span-2 text-gray-900 dark:text-white font-medium" x-text="formData.reportTitle || 'Security Report'"></div>
+                    </div>
+                    
+                    <div class="grid grid-cols-3 gap-2">
+                        <div class="text-gray-600 dark:text-gray-400">Dashboards:</div>
+                        <div class="col-span-2 text-gray-900 dark:text-white font-medium">
+                            <template x-for="(uid, index) in formData.selectedDashboards" :key="uid">
+                                <div>
+                                    <span x-text="getDashboardTitle(uid)"></span>
+                                    <span class="text-xs text-gray-600 dark:text-gray-400" x-text="'(' + getSelectedPanelCount(uid) + ' panels)'"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-3 gap-2">
+                        <div class="text-gray-600 dark:text-gray-400">Total Panels:</div>
+                        <div class="col-span-2">
+                            <span class="text-gray-900 dark:text-white font-medium" x-text="getTotalSelectedPanelCount()"></span>
+                            <span class="text-gray-600 dark:text-gray-400 text-xs ml-1" x-text="'(' + getAllSelectedPanelsInfo() + ')'"></span>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-3 gap-2">
+                        <div class="text-gray-600 dark:text-gray-400">Time Range:</div>
+                        <div class="col-span-2 text-gray-900 dark:text-white font-medium">
+                            <span x-text="formData.timeRange.from"></span>
+                            <span> to </span>
+                            <span x-text="formData.timeRange.to"></span>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-3 gap-2" x-show="formData.companyName">
+                        <div class="text-gray-600 dark:text-gray-400">Company:</div>
+                        <div class="col-span-2 text-gray-900 dark:text-white font-medium" x-text="formData.companyName"></div>
+                    </div>
+                    
+                    <div class="grid grid-cols-3 gap-2" x-show="formData.logoPath">
+                        <div class="text-gray-600 dark:text-gray-400">Logo:</div>
+                        <div class="col-span-2">
+                            <img x-bind:src="formData.logoPath" class="h-8 inline-block" alt="Logo" />
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-6">
+                    <h4 class="text-base font-medium text-gray-800 dark:text-white mb-3">Report Structure</h4>
+                    
+                    <div class="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden">
+                        <div class="px-4 py-3 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-600">
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Excel Workbook</span>
+                        </div>
+                        <div class="p-4">
+                            <ul class="space-y-2">
+                                <li class="flex items-center text-gray-800 dark:text-gray-200">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-green-500 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                                    </svg>
+                                    Sheet1: Summary (Cover sheet with report details)
+                                </li>
+                                
+                                <!-- Dashboard sections -->
+                                <template x-for="(dashUid, dashIndex) in formData.selectedDashboards" :key="dashUid">
+                                    <li class="pl-4 border-l-2 border-gray-200 dark:border-gray-600">
+                                        <div class="flex items-center text-gray-800 dark:text-gray-200 mb-2 font-medium">
+                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-500 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                                                <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                                            </svg>
+                                            <span x-text="getDashboardTitle(dashUid)"></span>
+                                        </div>
+                                        
+                                        <!-- Panel sheets for this dashboard -->
+                                        <ul class="space-y-1 ml-7">
+                                            <template x-if="formData.selectedPanels[dashUid]">
+                                                <template x-for="(panelId, panelIndex) in formData.selectedPanels[dashUid]" :key="panelId">
+                                                    <li class="flex items-center text-gray-600 dark:text-gray-300">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-500 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                                                            <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" />
+                                                        </svg>
+                                                        <span x-text="getPanelTitle(dashUid, panelId) || 'Panel ' + panelId"></span>
+                                                    </li>
+                                                </template>
+                                            </template>
+                                        </ul>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Step 5: Generate -->
+        <div x-show="currentStep === 5" class="space-y-6">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-white">Generate Report</h3>
+            <p class="text-gray-600 dark:text-gray-300">Your report is ready to be generated.</p>
+            <div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-6 text-center">
+                <div class="mb-4">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto text-primary-500 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+                <h4 class="text-xl font-medium text-gray-900 dark:text-white mb-2">Ready to Generate Your Report</h4>
+                <p class="text-gray-600 dark:text-gray-300 mb-6">
+                    Click the button below to generate your Excel report with <span x-text="getTotalSelectedPanelCount()"></span> panels from 
+                    <span x-text="formData.selectedDashboards.length"></span> dashboard(s).
+                </p>
+                <button 
+                    @click="generateReport()"
+                    x-bind:disabled="loading.generate || !isReadyToGenerate()"
+                    x-bind:class="{'opacity-50 cursor-not-allowed': loading.generate || !isReadyToGenerate()}"
+                    class="inline-flex justify-center items-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                >
+                    <template x-if="!loading.generate">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+                        </svg>
+                    </template>
+                    <template x-if="loading.generate">
+                        <svg class="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </template>
+                    <span x-text="loading.generate ? 'Generating...' : 'Download Report'"></span>
+                </button>
+            </div>
+
+            <div x-show="previousReports.length > 0" class="mt-8">
+                <h4 class="text-lg font-medium text-gray-900 dark:text-white mb-3">Recent Reports</h4>
+                <div class="bg-white dark:bg-gray-800 shadow overflow-hidden rounded-md">
+                    <ul class="divide-y divide-gray-200 dark:divide-gray-700">
+                        <template x-for="(report, index) in previousReports" :key="index">
+                            <li class="px-4 py-3 flex items-center justify-between">
+                                <div class="flex items-center">
+                                    <div class="flex-shrink-0 h-8 w-8 bg-blue-100 dark:bg-blue-900 rounded-md flex items-center justify-center">
+                                        <span class="text-xs font-medium text-blue-700 dark:text-blue-300">XLS</span>
+                                    </div>
+                                    <div class="ml-3">
+                                        <p class="text-sm font-medium text-gray-900 dark:text-white" x-text="report.title"></p>
+                                        <p class="text-xs text-gray-500 dark:text-gray-400">
+                                            <span x-text="report.date"></span> • 
+                                            <span x-text="report.dashboardCount + ' dashboards, ' + report.panels + ' panels'"></span>
+                                        </p>
+                                    </div>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save Template Dialog -->
+        <div 
+            x-show="showSaveTemplateDialog"
+            class="fixed inset-0 overflow-y-auto z-50"
+            x-transition:enter="ease-out duration-300"
+            x-transition:enter-start="opacity-0"
+            x-transition:enter-end="opacity-100"
+            x-transition:leave="ease-in duration-200"
+            x-transition:leave-start="opacity-100"
+            x-transition:leave-end="opacity-0"
+        >
+            <div class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                <div 
+                    class="fixed inset-0 bg-gray-500 bg-opacity-75 dark:bg-gray-900 dark:bg-opacity-75 transition-opacity" 
+                    x-show="showSaveTemplateDialog"
+                    @click="showSaveTemplateDialog = false"
+                ></div>
+            
+                <span class="hidden sm:inline-block sm:align-middle sm:h-screen">&#8203;</span>
+                
+                <div 
+                    class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6"
+                    x-show="showSaveTemplateDialog"
+                    x-transition:enter="ease-out duration-300"
+                    x-transition:enter-start="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+                    x-transition:enter-end="opacity-100 translate-y-0 sm:scale-100"
+                    x-transition:leave="ease-in duration-200"
+                    x-transition:leave-start="opacity-100 translate-y-0 sm:scale-100"
+                    x-transition:leave-end="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
+                >
+                    <div>
+                        <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-primary-100 dark:bg-primary-900">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                            </svg>
+                        </div>
+                        <div class="mt-3 text-center sm:mt-5">
+                            <h3 class="text-lg leading-6 font-medium text-gray-900 dark:text-white">Save Report Template</h3>
+                            <div class="mt-2">
+                                <p class="text-sm text-gray-500 dark:text-gray-400">
+                                    Save your current dashboard and panel selections as a template to reuse it in future reports.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-5">
+                        <label for="template_name" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Template Name</label>
+                        <input 
+                            type="text" 
+                            id="template_name" 
+                            x-model="templateName"
+                            placeholder="Enter a name for this template"
+                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                        >
+                    </div>
+                    <div class="mt-5 sm:mt-6 sm:grid sm:grid-cols-2 sm:gap-3 sm:grid-flow-row-dense">
+                        <button 
+                            type="button" 
+                            @click="saveTemplate()"
+                            class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-primary-600 text-base font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:col-start-2 sm:text-sm"
+                        >
+                            Save Template
+                        </button>
+                        <button 
+                            type="button" 
+                            @click="showSaveTemplateDialog = false"
+                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-2 bg-white dark:bg-gray-700 text-base font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:col-start-1 sm:text-sm"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Wizard navigation buttons -->
+    <div class="px-6 py-4 bg-gray-50 dark:bg-gray-700 rounded-b-lg border-t border-gray-200 dark:border-gray-600 flex justify-between">
+        <button 
+            x-show="currentStep > 1"
+            @click="prevStep()"
+            class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+        >
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" />
+            </svg>
+            Previous
+        </button>
+        <div></div>
+        <button 
+            x-show="currentStep < 5"
+            @click="nextStep()"
+            x-bind:disabled="!canAdvance()"
+            x-bind:class="{'opacity-50 cursor-not-allowed': !canAdvance()}"
+            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+        >
+            <span x-text="currentStep === 4 ? 'Generate Report' : 'Next'"></span>
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-2" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+            </svg>
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+<script src="/static/js/wizard.js"></script>
+{% endblock %}

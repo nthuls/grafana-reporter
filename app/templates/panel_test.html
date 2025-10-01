@@ -1,0 +1,355 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto bg-white dark:bg-gray-800 shadow-md rounded-lg p-6">
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-4">Panel Data Test</h1>
+    
+    <div class="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+            <label for="dashboard_select" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Dashboard</label>
+            <select id="dashboard_select" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm">
+                <option value="">Select a dashboard</option>
+            </select>
+            <div id="dashboard_loading" class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                <span class="animate-pulse">Loading dashboards...</span>
+            </div>
+        </div>
+        <div>
+            <label for="panel_select" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Panel</label>
+            <select id="panel_select" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm" disabled>
+                <option value="">Select a dashboard first</option>
+            </select>
+            <div id="panel_loading" class="hidden mt-1 text-sm text-gray-500 dark:text-gray-400">
+                <span class="animate-pulse">Loading panels...</span>
+            </div>
+        </div>
+        <div>
+            <label for="from_time" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">From Time</label>
+            <input type="text" id="from_time" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm" value="now-24h">
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Example: "now-24h", "now-7d", or ISO format
+            </div>
+        </div>
+        <div>
+            <label for="to_time" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">To Time</label>
+            <input type="text" id="to_time" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm" value="now">
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Example: "now", "now-1h", or ISO format
+            </div>
+        </div>
+    </div>
+    
+    <div class="mb-6">
+        <button id="fetch_panel" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none" disabled>
+            Fetch Panel Data
+        </button>
+        
+        <button id="generate_report" class="ml-2 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none" disabled>
+            Generate Report
+        </button>
+    </div>
+    
+    <div id="panel_type_info" class="mb-4 p-4 bg-blue-50 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-md hidden">
+        <div class="font-medium">Panel Type: <span id="panel_type"></span></div>
+    </div>
+    
+    <div id="loading" class="hidden text-center p-4">
+        <div class="animate-spin inline-block w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full"></div>
+        <p class="mt-2 text-gray-600 dark:text-gray-300">Loading panel data...</p>
+    </div>
+    
+    <div id="panel_info" class="mb-4 hidden">
+        <h2 class="text-lg font-medium text-gray-900 dark:text-white">Panel Information</h2>
+        <div class="mt-2 bg-gray-100 dark:bg-gray-700 p-4 rounded-md">
+            <pre id="panel_info_json" class="text-sm overflow-auto"></pre>
+        </div>
+    </div>
+    
+    <div id="data_table" class="hidden">
+        <h2 class="text-lg font-medium text-gray-900 dark:text-white mb-2">Panel Data</h2>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                <thead class="bg-gray-50 dark:bg-gray-800">
+                    <tr id="table_header"></tr>
+                </thead>
+                <tbody id="table_body" class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-800"></tbody>
+            </table>
+        </div>
+        <p class="mt-2 text-gray-500 dark:text-gray-400"><span id="row_count">0</span> rows</p>
+    </div>
+    
+    <div id="error_message" class="hidden mt-4 p-4 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 rounded-md"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const dashboardSelect = document.getElementById('dashboard_select');
+    const panelSelect = document.getElementById('panel_select');
+    const dashboardLoading = document.getElementById('dashboard_loading');
+    const panelLoading = document.getElementById('panel_loading');
+    const fromTimeInput = document.getElementById('from_time');
+    const toTimeInput = document.getElementById('to_time');
+    const fetchPanelBtn = document.getElementById('fetch_panel');
+    const generateReportBtn = document.getElementById('generate_report');
+    const panelTypeInfo = document.getElementById('panel_type_info');
+    const panelTypeSpan = document.getElementById('panel_type');
+    const loadingDiv = document.getElementById('loading');
+    const panelInfoDiv = document.getElementById('panel_info');
+    const panelInfoJson = document.getElementById('panel_info_json');
+    const dataTableDiv = document.getElementById('data_table');
+    const tableHeader = document.getElementById('table_header');
+    const tableBody = document.getElementById('table_body');
+    const rowCount = document.getElementById('row_count');
+    const errorMessage = document.getElementById('error_message');
+    
+    // Function to load dashboards
+    async function loadDashboards() {
+        try {
+            const response = await fetch('/reports/dashboards-list');
+            
+            if (!response.ok) {
+                throw new Error('Failed to load dashboards');
+            }
+            
+            const data = await response.json();
+            
+            // Add options to the dropdown
+            data.dashboards.forEach(dashboard => {
+                const option = document.createElement('option');
+                option.value = dashboard.uid;
+                option.textContent = dashboard.title;
+                if (dashboard.folder) {
+                    option.textContent += ` (${dashboard.folder})`;
+                }
+                dashboardSelect.appendChild(option);
+            });
+            
+        } catch (error) {
+            console.error('Error loading dashboards:', error);
+            errorMessage.textContent = error.message;
+            errorMessage.classList.remove('hidden');
+        } finally {
+            dashboardLoading.classList.add('hidden');
+        }
+    }
+    
+    // Function to load panels for a dashboard
+    async function loadPanels(dashboardUid) {
+        panelSelect.innerHTML = '<option value="">Select a panel</option>';
+        panelSelect.disabled = true;
+        panelLoading.classList.remove('hidden');
+        fetchPanelBtn.disabled = true;
+        generateReportBtn.disabled = true;
+        
+        try {
+            const response = await fetch(`/reports/dashboard-panels?dashboard_uid=${dashboardUid}`);
+            
+            if (!response.ok) {
+                throw new Error('Failed to load panels');
+            }
+            
+            const data = await response.json();
+            
+            // Add options to the dropdown
+            data.panels.forEach(panel => {
+                const option = document.createElement('option');
+                option.value = panel.id;
+                option.textContent = `${panel.title} (${panel.type})`;
+                option.dataset.type = panel.type;
+                panelSelect.appendChild(option);
+            });
+            
+            panelSelect.disabled = false;
+            
+        } catch (error) {
+            console.error('Error loading panels:', error);
+            errorMessage.textContent = error.message;
+            errorMessage.classList.remove('hidden');
+        } finally {
+            panelLoading.classList.add('hidden');
+        }
+    }
+    
+    // Function to fetch panel data
+    async function fetchPanelData() {
+        const dashboardUid = dashboardSelect.value;
+        const panelId = panelSelect.value;
+        const fromTime = fromTimeInput.value.trim();
+        const toTime = toTimeInput.value.trim();
+        
+        errorMessage.classList.add('hidden');
+        loadingDiv.classList.remove('hidden');
+        panelInfoDiv.classList.add('hidden');
+        dataTableDiv.classList.add('hidden');
+        
+        try {
+            const response = await fetch(
+                `/reports/panel-data?dashboard_uid=${dashboardUid}&panel_id=${panelId}&from_time=${encodeURIComponent(fromTime)}&to_time=${encodeURIComponent(toTime)}`
+            );
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || 'Failed to fetch panel data');
+            }
+            
+            const data = await response.json();
+            
+            // Display panel info
+            panelInfoJson.textContent = JSON.stringify(data.panel_info, null, 2);
+            panelInfoDiv.classList.remove('hidden');
+            
+            // Display data table
+            tableHeader.innerHTML = '';
+            tableBody.innerHTML = '';
+            
+            // Add header row
+            data.fields.forEach(field => {
+                const th = document.createElement('th');
+                th.textContent = field;
+                th.className = 'px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider';
+                tableHeader.appendChild(th);
+            });
+            
+            // Add data rows with formatting
+            data.rows.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-50 dark:hover:bg-gray-800';
+                
+                row.forEach(cell => {
+                    const td = document.createElement('td');
+                    
+                    // Format cell based on type
+                    if (cell === null || cell === undefined) {
+                        td.textContent = '';
+                    } else if (typeof cell === 'number') {
+                        if (cell > 1e12) {
+                            // Treat as timestamp (ms)
+                            const date = new Date(cell);
+                            td.textContent = date.toLocaleString();
+                        } else if (Number.isInteger(cell)) {
+                            td.textContent = cell.toLocaleString(); // thousands separator
+                        } else {
+                            td.textContent = cell.toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                            });
+                        }
+                    } else {
+                        td.textContent = cell.toString();
+                    }
+                    
+                    td.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400';
+                    tr.appendChild(td);
+                });
+                
+                tableBody.appendChild(tr);
+            });
+            
+            rowCount.textContent = data.row_count;
+            dataTableDiv.classList.remove('hidden');
+            
+        } catch (error) {
+            errorMessage.textContent = error.message;
+            errorMessage.classList.remove('hidden');
+        } finally {
+            loadingDiv.classList.add('hidden');
+        }
+    }
+
+    
+    // Function to generate report for a single panel
+    async function generateReport() {
+        const dashboardUid = dashboardSelect.value;
+        const panelId = panelSelect.value;
+        const fromTime = fromTimeInput.value.trim();
+        const toTime = toTimeInput.value.trim();
+        
+        errorMessage.classList.add('hidden');
+        loadingDiv.classList.remove('hidden');
+        
+        try {
+            // Create form data
+            const formData = new FormData();
+            formData.append('dashboard_uid', dashboardUid);
+            formData.append('panel_ids', JSON.stringify([parseInt(panelId)]));
+            formData.append('time_range', JSON.stringify({
+                from: fromTime,
+                to: toTime
+            }));
+            
+            // Get the panel title for the report title
+            const selectedOption = panelSelect.options[panelSelect.selectedIndex];
+            const panelTitle = selectedOption.textContent.split(' (')[0];
+            formData.append('report_title', `${panelTitle} Report`);
+            
+            // Generate report
+            const response = await fetch('/reports/generate-from-panels', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to generate report');
+            }
+            
+            // Download the file
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `${panelTitle.replace(/\s+/g, '_')}_Report.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            
+        } catch (error) {
+            errorMessage.textContent = error.message;
+            errorMessage.classList.remove('hidden');
+        } finally {
+            loadingDiv.classList.add('hidden');
+        }
+    }
+    
+    // Add event listeners
+    dashboardSelect.addEventListener('change', function() {
+        const dashboardUid = this.value;
+        if (dashboardUid) {
+            loadPanels(dashboardUid);
+        } else {
+            panelSelect.innerHTML = '<option value="">Select a dashboard first</option>';
+            panelSelect.disabled = true;
+            fetchPanelBtn.disabled = true;
+            generateReportBtn.disabled = true;
+        }
+    });
+    
+    panelSelect.addEventListener('change', function() {
+        const panelId = this.value;
+        if (panelId) {
+            fetchPanelBtn.disabled = false;
+            generateReportBtn.disabled = false;
+            
+            // Show panel type
+            const selectedOption = this.options[this.selectedIndex];
+            const panelType = selectedOption.dataset.type;
+            panelTypeSpan.textContent = panelType;
+            panelTypeInfo.classList.remove('hidden');
+        } else {
+            fetchPanelBtn.disabled = true;
+            generateReportBtn.disabled = true;
+            panelTypeInfo.classList.add('hidden');
+        }
+    });
+    
+    // Add event listeners for buttons
+    fetchPanelBtn.addEventListener('click', fetchPanelData);
+    generateReportBtn.addEventListener('click', generateReport);
+    
+    // Load dashboards when the page loads
+    loadDashboards();
+});
+</script>
+{% endblock %}
