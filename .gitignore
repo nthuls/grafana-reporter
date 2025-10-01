@@ -35,3 +35,10 @@ Thumbs.db
 reports/*.pdf
 reports/*.png
 reports/*.jpg
+# Reports output
+reports/*.csv
+reports/*.xlsx
+reports/*.pdf
+app/static/uploads/3bc59ae4-5baf-4cf5-bb2c-6db2dc83800d.jpg
+app/static/uploads/9bff26c6-e5f8-4adc-b92c-1efa59eb8bd7.png
+app/static/uploads/db0d3d08-438e-4371-9334-208a12fe1f21.jpg
