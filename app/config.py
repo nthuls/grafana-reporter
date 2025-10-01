@@ -1,5 +1,6 @@
 # app/config.py
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -7,6 +8,7 @@ load_dotenv()
 
 class Settings:
     """Application configuration."""
+    
     # App settings
     APP_NAME: str = "Security Report Wizard"
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
@@ -24,6 +26,14 @@ class Settings:
     # Report settings
     DEFAULT_REPORT_TITLE: str = "Security Report"
     DEFAULT_DATE_FORMAT: str = "%Y-%m-%d %H:%M:%S"
+    
+    # Reports directory
+    BASE_DIR: Path = Path(__file__).parent.parent
+    REPORTS_DIR: str = str(BASE_DIR / "reports")
 
 # Create settings instance
 settings = Settings()
+
+# Ensure directories exist
+os.makedirs(settings.UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(settings.REPORTS_DIR, exist_ok=True)

@@ -18,7 +18,7 @@ templates = Jinja2Templates(directory="app/templates")
 
 # Initialize services
 grafana_service = GrafanaService()
-report_service = ReportService()
+report_service = ReportService(reports_dir=settings.REPORTS_DIR)
 
 # Helper functions
 def get_session_data(request: Request):
