@@ -18,6 +18,9 @@ class Settings:
     GRAFANA_API_KEY: str = os.getenv("GRAFANA_API_KEY", "")
     GRAFANA_ORG_NAME: str = os.getenv("GRAFANA_ORG_NAME", "Main Org")
     
+    # OpenSearch/Elasticsearch index patterns
+    OPENSEARCH_INDEX_PATTERNS: str = os.getenv("OPENSEARCH_INDEX_PATTERNS", "*")
+    
     # Upload settings
     UPLOAD_FOLDER: str = "app/static/uploads"
     ALLOWED_EXTENSIONS: list = ["png", "jpg", "jpeg", "svg"]

@@ -316,7 +316,7 @@ class GrafanaService:
         return out
 
     def get_panel_data(self, dashboard_uid: str, panel_id: int, time_range: Dict[str, str]) -> Dict[str, Any]:
-        """Fetch data for a specific panel - FIXED VERSION"""
+        """Fetch data for a specific panel - queries both Fortigate and Wazuh indices"""
         try:
             # Get dashboard JSON
             dashboard_url = f"{self.base_url}/api/dashboards/uid/{dashboard_uid}"
@@ -343,33 +343,65 @@ class GrafanaService:
             if not ds:
                 return self._create_empty_panel_result(panel_id, "No OpenSearch datasource found", panel.get("title", ""), panel_type)
 
-            # BYPASS GRAFANA QUERY API - Query OpenSearch directly
+            # Get target query
             target = panel_targets[0]
             query_str = target.get("query", "")
             bucket_aggs = target.get("bucketAggs", [])
-            
+
             # Resolve template variables
             query_str = self._resolve_template_vars(dashboard_data, query_str)
-            
-            # Build direct OpenSearch query
-            index_pattern = "fortigate-ampath_*"  # Adjust as needed
+
+            # Get actual indices from the datasource
+            try:
+                indices = self._get_elasticsearch_indices({"id": ds["id"]})
+
+                # Filter for fortigate and wazuh indices
+                relevant_indices = [idx for idx in indices if "fortigate-ampath" in idx or "wazuh-alerts" in idx]
+
+                if not relevant_indices:
+                    self.logger.error("No matching fortigate or wazuh indices found")
+                    return self._create_empty_panel_result(panel_id, "No matching indices found", panel.get("title", ""), panel_type)
+
+                # ✅ Use wildcard patterns instead of comma-separated indices
+                patterns = []
+                if any("wazuh-alerts" in idx for idx in relevant_indices):
+                    patterns.append("wazuh-alerts-*")
+                if any("fortigate-ampath" in idx for idx in relevant_indices):
+                    patterns.append("fortigate-ampath_*")
+
+                if patterns:
+                    index_pattern = ",".join(patterns)
+                else:
+                    index_pattern = relevant_indices[0] if relevant_indices else "*"
+
+                self.logger.info(f"[INDEX] Using pattern(s): {index_pattern}")
+
+
+            except Exception as e:
+                self.logger.error(f"Failed to get indices: {e}")
+                # Fallback to a known safe pattern
+                index_pattern = "wazuh-alerts-*"
+                self.logger.info(f"[INDEX] Using fallback pattern: {index_pattern}")
+
+            # ✅ Build final URL
             url = f"{self.base_url}/api/datasources/proxy/{ds['id']}/{index_pattern}/_search"
-            
+
             # Convert Grafana query to OpenSearch query
             must_clauses = []
-            
-            # Parse the Lucene query string
             if query_str and query_str != "*":
-                # Simple parsing for "field:value AND field:value" format
                 for clause in query_str.split(" AND "):
                     clause = clause.strip()
                     if ":" in clause:
                         field, value = clause.split(":", 1)
-                        must_clauses.append({"term": {field.strip(): value.strip()}})
-            
+                        value = value.strip()
+                        # Skip meaningless (*) values from Grafana
+                        if value in ["(*)", "*"]:
+                            continue
+                        must_clauses.append({"term": {field.strip(): value}})
+
             # Add time range
-            from_time = time_range.get("from", "now-24h")
-            to_time = time_range.get("to", "now")
+            from_time = time_range.get("from", "now-24h") or "now-24h"
+            to_time = time_range.get("to", "now") or "now"
             must_clauses.append({
                 "range": {
                     "timestamp": {
@@ -378,21 +410,21 @@ class GrafanaService:
                     }
                 }
             })
-            
+
             # Build aggregations from bucketAggs
             aggs = {}
             if bucket_aggs:
                 for agg in bucket_aggs:
                     agg_type = agg.get("type")
                     agg_id = agg.get("id", "2")
-                    
+
                     if agg_type == "terms":
                         field = agg.get("field")
-                        settings = agg.get("settings", {})
-                        size = settings.get("size", 10)
-                        order = settings.get("order", "desc")
-                        order_by = settings.get("orderBy", "_count")
-                        
+                        settings_dict = agg.get("settings", {})
+                        size = int(settings_dict.get("size", 10))
+                        order = settings_dict.get("order", "desc")
+                        order_by = settings_dict.get("orderBy", "_count")
+
                         aggs[f"agg_{agg_id}"] = {
                             "terms": {
                                 "field": field,
@@ -402,55 +434,44 @@ class GrafanaService:
                         }
                     elif agg_type == "date_histogram":
                         field = agg.get("field", "timestamp")
-                        settings = agg.get("settings", {})
-                        interval = settings.get("interval", "auto")
-                        
+                        settings_dict = agg.get("settings", {})
+                        interval = settings_dict.get("interval", "auto")
+
                         aggs[f"agg_{agg_id}"] = {
                             "date_histogram": {
                                 "field": field,
                                 "fixed_interval": "1h" if interval == "auto" else interval
                             }
                         }
-            
+
             # Final payload
             payload = {
                 "size": 0,
-                "query": {
-                    "bool": {
-                        "must": must_clauses
-                    }
-                }
+                "query": {"bool": {"must": must_clauses}}
             }
-            
             if aggs:
                 payload["aggs"] = aggs
-            
+
             self.logger.info(f"[DIRECT QUERY] {json.dumps(payload, indent=2)}")
-            
+
             # Execute query
             response = requests.post(url, headers=self.headers, json=payload)
             response.raise_for_status()
             result = response.json()
-            
+
             # Parse results
-            fields = []
-            rows = []
-            
+            fields, rows = [], []
             if aggs:
-                # Get first aggregation
                 agg_results = result.get("aggregations", {})
                 first_agg_key = list(agg_results.keys())[0] if agg_results else None
-                
+
                 if first_agg_key:
                     buckets = agg_results[first_agg_key].get("buckets", [])
-                    
                     if buckets:
-                        # Determine fields based on bucket structure
-                        if isinstance(buckets[0], dict) and "key" in buckets[0]:
-                            fields = ["Key", "Count"]
-                            for bucket in buckets:
-                                rows.append([bucket.get("key"), bucket.get("doc_count", 0)])
-            
+                        fields = ["Key", "Count"]
+                        for bucket in buckets:
+                            rows.append([bucket.get("key"), bucket.get("doc_count", 0)])
+
             return {
                 "fields": fields,
                 "rows": rows,
@@ -461,10 +482,11 @@ class GrafanaService:
                     "description": panel.get("description", ""),
                 }
             }
-            
+
         except Exception as e:
             self.logger.error(f"[ERROR] get_panel_data: {e}", exc_info=True)
             return self._create_empty_panel_result(panel_id, f"Error: {e}")
+
 
             
     def _create_empty_panel_result(self, panel_id: int, error_message: str, title: str = "Unknown Panel", panel_type: str = "unknown", description: str = "") -> Dict[str, Any]:
