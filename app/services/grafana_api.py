@@ -315,18 +315,16 @@ class GrafanaService:
         out = out.replace("${Filters:lucene}", "").replace("${Filters}", "")
         return out
 
-
-
     def get_panel_data(self, dashboard_uid: str, panel_id: int, time_range: Dict[str, str]) -> Dict[str, Any]:
-        """Fetch data for a specific panel with the given time range (dynamic datasource resolution)."""
+        """Fetch data for a specific panel - FIXED VERSION"""
         try:
-            # --- Get dashboard JSON ---
+            # Get dashboard JSON
             dashboard_url = f"{self.base_url}/api/dashboards/uid/{dashboard_uid}"
             resp = requests.get(dashboard_url, headers=self.headers)
             resp.raise_for_status()
             dashboard_data = resp.json().get("dashboard", {})
 
-            # --- Find the panel ---
+            # Find the panel
             panel = next((p for p in self._extract_panels_from_dashboard(dashboard_data) if p.get("id") == panel_id), None)
             if not panel:
                 return self._create_empty_panel_result(panel_id, "Panel not found")
@@ -336,7 +334,7 @@ class GrafanaService:
             if not panel_targets:
                 return self._create_empty_panel_result(panel_id, "No query targets", panel.get("title", ""), panel_type)
 
-            # --- Resolve datasource dynamically ---
+            # Get datasource info
             ds_resp = requests.get(f"{self.base_url}/api/datasources", headers=self.headers)
             ds_resp.raise_for_status()
             datasources = ds_resp.json()
@@ -345,78 +343,125 @@ class GrafanaService:
             if not ds:
                 return self._create_empty_panel_result(panel_id, "No OpenSearch datasource found", panel.get("title", ""), panel_type)
 
-            datasource_uid = ds["uid"]
-            datasource_type = ds["type"]
-
-            # --- Build queries ---
-            queries = []
-            for i, target in enumerate(panel_targets):
-                if target.get("hide"):
-                    continue
-                q = {
-                    "refId": target.get("refId", chr(65 + i)),
-                    "datasource": {"uid": datasource_uid, "type": datasource_type},
-                    "datasourceId": ds["id"],
-                    "intervalMs": 60000,
-                    "maxDataPoints": 500,
-                    "panelId": panel_id,
-                }
-                for key in ["alias", "bucketAggs", "metrics", "timeField", "format", "queryType", "luceneQueryType", "query"]:
-                    if key in target:
-                        q[key] = target[key]
-
-                # Resolve template variables in query string
-                if "query" in q:
-                    q["query"] = self._resolve_template_vars(dashboard_data, q["query"])
-
-                # Normalize bucketAggs numeric settings
-                for agg in q.get("bucketAggs", []):
-                    if "settings" in agg:
-                        for k, v in agg["settings"].items():
-                            if isinstance(v, str) and v.isdigit():
-                                agg["settings"][k] = int(v)
-
-                queries.append(q)
-
-            if not queries:
-                return self._create_empty_panel_result(panel_id, "No valid queries", panel.get("title", ""), panel_type)
-
-            # --- Time range ---
+            # BYPASS GRAFANA QUERY API - Query OpenSearch directly
+            target = panel_targets[0]
+            query_str = target.get("query", "")
+            bucket_aggs = target.get("bucketAggs", [])
+            
+            # Resolve template variables
+            query_str = self._resolve_template_vars(dashboard_data, query_str)
+            
+            # Build direct OpenSearch query
+            index_pattern = "fortigate-ampath_*"  # Adjust as needed
+            url = f"{self.base_url}/api/datasources/proxy/{ds['id']}/{index_pattern}/_search"
+            
+            # Convert Grafana query to OpenSearch query
+            must_clauses = []
+            
+            # Parse the Lucene query string
+            if query_str and query_str != "*":
+                # Simple parsing for "field:value AND field:value" format
+                for clause in query_str.split(" AND "):
+                    clause = clause.strip()
+                    if ":" in clause:
+                        field, value = clause.split(":", 1)
+                        must_clauses.append({"term": {field.strip(): value.strip()}})
+            
+            # Add time range
             from_time = time_range.get("from", "now-24h")
             to_time = time_range.get("to", "now")
-
-            def to_ms(val: str) -> str:
-                if val.startswith("now"):
-                    return val
-                try:
-                    dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
-                    return str(int(dt.timestamp() * 1000))
-                except Exception:
-                    return val
-
+            must_clauses.append({
+                "range": {
+                    "timestamp": {
+                        "gte": from_time,
+                        "lte": to_time
+                    }
+                }
+            })
+            
+            # Build aggregations from bucketAggs
+            aggs = {}
+            if bucket_aggs:
+                for agg in bucket_aggs:
+                    agg_type = agg.get("type")
+                    agg_id = agg.get("id", "2")
+                    
+                    if agg_type == "terms":
+                        field = agg.get("field")
+                        settings = agg.get("settings", {})
+                        size = settings.get("size", 10)
+                        order = settings.get("order", "desc")
+                        order_by = settings.get("orderBy", "_count")
+                        
+                        aggs[f"agg_{agg_id}"] = {
+                            "terms": {
+                                "field": field,
+                                "size": size,
+                                "order": {order_by: order}
+                            }
+                        }
+                    elif agg_type == "date_histogram":
+                        field = agg.get("field", "timestamp")
+                        settings = agg.get("settings", {})
+                        interval = settings.get("interval", "auto")
+                        
+                        aggs[f"agg_{agg_id}"] = {
+                            "date_histogram": {
+                                "field": field,
+                                "fixed_interval": "1h" if interval == "auto" else interval
+                            }
+                        }
+            
+            # Final payload
             payload = {
-                "from": to_ms(from_time),
-                "to": to_ms(to_time),
-                "queries": queries,
-                "requestId": f"Q{panel_id}"
+                "size": 0,
+                "query": {
+                    "bool": {
+                        "must": must_clauses
+                    }
+                }
             }
-
-            self.logger.info(f"[QUERY PAYLOAD] {json.dumps(payload, indent=2)}")
-
-            query_url = f"{self.base_url}/api/ds/query"
-            q_resp = requests.post(query_url, headers=self.headers, json=payload)
-            q_resp.raise_for_status()
-            query_data = q_resp.json()
-
-            result = self._process_panel_data(panel, query_data)
-            result["panel"] = {
-                "id": panel_id,
-                "title": panel.get("title", ""),
-                "type": panel_type,
-                "description": panel.get("description", ""),
+            
+            if aggs:
+                payload["aggs"] = aggs
+            
+            self.logger.info(f"[DIRECT QUERY] {json.dumps(payload, indent=2)}")
+            
+            # Execute query
+            response = requests.post(url, headers=self.headers, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            
+            # Parse results
+            fields = []
+            rows = []
+            
+            if aggs:
+                # Get first aggregation
+                agg_results = result.get("aggregations", {})
+                first_agg_key = list(agg_results.keys())[0] if agg_results else None
+                
+                if first_agg_key:
+                    buckets = agg_results[first_agg_key].get("buckets", [])
+                    
+                    if buckets:
+                        # Determine fields based on bucket structure
+                        if isinstance(buckets[0], dict) and "key" in buckets[0]:
+                            fields = ["Key", "Count"]
+                            for bucket in buckets:
+                                rows.append([bucket.get("key"), bucket.get("doc_count", 0)])
+            
+            return {
+                "fields": fields,
+                "rows": rows,
+                "panel": {
+                    "id": panel_id,
+                    "title": panel.get("title", ""),
+                    "type": panel_type,
+                    "description": panel.get("description", ""),
+                }
             }
-            return result
-
+            
         except Exception as e:
             self.logger.error(f"[ERROR] get_panel_data: {e}", exc_info=True)
             return self._create_empty_panel_result(panel_id, f"Error: {e}")
@@ -463,6 +508,9 @@ class GrafanaService:
         panel_type = panel.get("type", "unknown")
         panel_title = panel.get("title", "Unnamed Panel")
         self.logger.debug(f"[PROCESS] Panel '{panel_title}' type={panel_type}")
+        
+        # Log the entire query response for debugging
+        self.logger.debug(f"[PROCESS] Query data structure: {json.dumps(query_data, indent=2)}")
 
         result = {"fields": [], "rows": []}
 
@@ -476,9 +524,30 @@ class GrafanaService:
             return val
 
         try:
-            frames = query_data.get("results", {}).get("A", {}).get("frames", [])
+            # Check if results exist
+            results = query_data.get("results", {})
+            if not results:
+                self.logger.warning(f"[PROCESS] No results object for panel {panel_title}")
+                return result
+            
+            # Get frames from first query (usually refId "A")
+            first_result = None
+            for key in ["A", "B", "C", "D"]:  # Try common refIds
+                if key in results:
+                    first_result = results[key]
+                    break
+            
+            if not first_result:
+                # Try the first available result
+                if results:
+                    first_result = list(results.values())[0]
+                else:
+                    self.logger.warning(f"[PROCESS] No query results for panel {panel_title}")
+                    return result
+            
+            frames = first_result.get("frames", [])
             if not frames:
-                self.logger.warning(f"[PROCESS] No frames for panel {panel_title}")
+                self.logger.warning(f"[PROCESS] No frames for panel {panel_title}. First result: {json.dumps(first_result, indent=2)}")
                 return result
 
             for frame in frames:
