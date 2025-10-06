@@ -62,21 +62,16 @@ class GrafanaService:
             raise Exception(f"Unsupported datasource type: {datasource['type']}")
     
     def _get_elasticsearch_indices(self, datasource: Dict[str, Any]) -> List[str]:
-        """Get alert-related and Fortigate indices via Grafana proxy"""
+        """Get all indices via Grafana proxy"""
         url = f"{self.base_url}/api/datasources/proxy/{datasource['id']}/_cat/indices?format=json"
         response = requests.get(url, headers=self.headers)
         response.raise_for_status()
         indices_data = response.json()
 
-        # Filter indices to include those matching "alerts" or "fortigate-ampath_*"
-        matching_indices = [
-            index["index"]
-            for index in indices_data
-            if "alerts" in index.get("index", "").lower() or 
-               index.get("index", "").startswith("fortigate-ampath_")
-        ]
+        # Return all indices
+        all_indices = [index["index"] for index in indices_data]
 
-        return matching_indices
+        return all_indices
     
     def _get_opensearch_indices(self, datasource: Dict[str, Any]) -> List[str]:
         """Get indices from OpenSearch datasource"""
