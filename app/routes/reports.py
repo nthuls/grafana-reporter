@@ -1,15 +1,21 @@
-# app/routes/reports.py
+# app/routes/reports.py - FIXED VERSION WITH ERROR HANDLING
 from fastapi import APIRouter, Request, Depends, Form, File, UploadFile, HTTPException, Body
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 import os
 import uuid
 import json
+import traceback
+import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from app.services.grafana_api import GrafanaService
 from app.services.report_service import ReportService
 from app.config import settings
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -46,33 +52,46 @@ async def wizard_step(request: Request, step: int):
 async def get_datasources():
     """Get available data sources"""
     try:
+        logger.info("Fetching datasources...")
         datasources = grafana_service.get_datasources()
+        logger.info(f"Found {len(datasources)} datasources")
         return {"datasources": datasources}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting datasources: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to get datasources: {str(e)}")
 
 @router.get("/indices", response_class=JSONResponse)
 async def get_indices(datasource_id: str):
     """Get available indices for a datasource"""
     try:
+        logger.info(f"Fetching indices for datasource: {datasource_id}")
         indices = grafana_service.get_indices(datasource_id)
+        logger.info(f"Found {len(indices)} indices")
         return {"indices": indices}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting indices: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to get indices: {str(e)}")
 
 @router.get("/fields", response_class=JSONResponse)
 async def get_fields(datasource_id: str, index: str):
     """Get available fields for an index"""
     try:
+        logger.info(f"Fetching fields for datasource {datasource_id}, index {index}")
         fields = grafana_service.get_fields(datasource_id, index)
+        logger.info(f"Found {len(fields)} fields")
         return {"fields": fields}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting fields: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to get fields: {str(e)}")
 
 @router.post("/upload-logo", response_class=JSONResponse)
 async def upload_logo(file: UploadFile = File(...)):
     """Upload a logo for the report"""
     try:
+        logger.info(f"Uploading logo: {file.filename}")
         # Validate file extension
         file_ext = file.filename.split(".")[-1].lower()
         if file_ext not in settings.ALLOWED_EXTENSIONS:
@@ -89,91 +108,118 @@ async def upload_logo(file: UploadFile = File(...)):
         with open(file_path, "wb") as f:
             contents = await file.read()
             f.write(contents)
-            
+        
+        logger.info(f"Logo uploaded successfully: {filename}")
         return {"filename": filename, "path": f"/static/uploads/{filename}"}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/generate", response_class=FileResponse)
-async def generate_report(
-    datasource_id: str = Form(...),
-    index: str = Form(...),
-    fields: List[str] = Form(...),
-    filters: str = Form("{}"),  # JSON string of filters
-    report_format: str = Form("csv"),  # 'csv' or 'xlsx'
-    report_title: str = Form(settings.DEFAULT_REPORT_TITLE),
-    logo_path: Optional[str] = Form(None)
-):
-    """Generate and download a report based on the wizard inputs"""
-    try:
-        # Parse filters
-        filter_dict = json.loads(filters)
-        
-        # Get data from grafana
-        data = grafana_service.get_data(datasource_id, index, fields, filter_dict)
-        
-        # Generate timestamp for filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{report_title.replace(' ', '_')}_{timestamp}"
-        
-        # Generate report file
-        if report_format.lower() == "xlsx":
-            file_path = report_service.generate_xlsx(
-                data, 
-                filename, 
-                fields, 
-                report_title, 
-                logo_path
-            )
-        else:  # Default to CSV
-            file_path = report_service.generate_csv(
-                data, 
-                filename, 
-                fields
-            )
-        
-        # Return file for download
-        return FileResponse(
-            path=file_path, 
-            filename=os.path.basename(file_path),
-            media_type="application/octet-stream"
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error uploading logo: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to upload logo: {str(e)}")
 
 # New API endpoints for Grafana dashboards and panels
 @router.get("/dashboards", response_class=JSONResponse)
 async def get_dashboards():
     """Get available Grafana dashboards"""
     try:
+        logger.info("=" * 80)
+        logger.info("FETCHING DASHBOARDS")
+        logger.info(f"Grafana URL: {settings.GRAFANA_URL}")
+        logger.info(f"API Key configured: {bool(settings.GRAFANA_API_KEY)}")
+        logger.info("=" * 80)
+        
         dashboards = grafana_service.get_dashboards()
+        
+        logger.info(f"Successfully fetched {len(dashboards)} dashboards")
+        for dash in dashboards[:5]:  # Log first 5
+            logger.info(f"  - {dash.get('title')} (UID: {dash.get('uid')})")
+        
         return {"dashboards": dashboards}
+        
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Connection error to Grafana: {e}")
+        logger.error(f"Check if Grafana is running at {settings.GRAFANA_URL}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Cannot connect to Grafana at {settings.GRAFANA_URL}. Is Grafana running?"
+        )
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"HTTP error from Grafana: {e}")
+        logger.error(f"Response: {e.response.text if hasattr(e, 'response') else 'No response'}")
+        if e.response.status_code == 401:
+            raise HTTPException(
+                status_code=500,
+                detail="Grafana API authentication failed. Check your GRAFANA_API_KEY in .env file"
+            )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Grafana API error: {str(e)}"
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected error getting dashboards: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to get dashboards: {str(e)}"
+        )
 
 @router.get("/panels", response_class=JSONResponse)
 async def get_dashboard_panels(dashboard_uid: str):
     """Get panels for a specific dashboard"""
     try:
+        logger.info("=" * 80)
+        logger.info(f"FETCHING PANELS FOR DASHBOARD: {dashboard_uid}")
+        logger.info("=" * 80)
+        
         panels = grafana_service.get_dashboard_panels(dashboard_uid)
+        
+        logger.info(f"Successfully fetched {len(panels)} panels")
+        for panel in panels[:5]:  # Log first 5
+            logger.info(f"  - Panel {panel.get('id')}: {panel.get('title')} (type: {panel.get('type')})")
+        
         return {"panels": panels}
+        
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"Connection error to Grafana: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cannot connect to Grafana. Check if it's running at {settings.GRAFANA_URL}"
+        )
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"HTTP error from Grafana: {e}")
+        logger.error(f"Response: {e.response.text if hasattr(e, 'response') else 'No response'}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get panels from Grafana: {str(e)}"
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected error getting panels: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get panels: {str(e)}"
+        )
 
 @router.post("/generate-from-panels", response_class=FileResponse)
 async def generate_report_from_panels(
-    dashboard_uid: str = Form(...),  # For backward compatibility
-    panel_ids: str = Form(...),      # For backward compatibility
-    dashboards: Optional[str] = Form(None),  # New parameter for multi-dashboard support
-    time_range: str = Form(...),  # JSON string with from and to fields
+    dashboard_uid: str = Form(...),
+    panel_ids: str = Form(...),
+    dashboards: Optional[str] = Form(None),
+    time_range: str = Form(...),
     report_title: str = Form(settings.DEFAULT_REPORT_TITLE),
     company_name: Optional[str] = Form(None),
     logo_path: Optional[str] = Form(None)
 ):
-    """Generate and download a report from selected Grafana panels across multiple dashboards"""
+    """Generate and download a report from selected Grafana panels"""
     try:
+        logger.info("=" * 80)
+        logger.info("GENERATING REPORT")
+        logger.info("=" * 80)
+        
         # Parse time range
         time_range_dict = json.loads(time_range)
+        logger.info(f"Time range: {time_range_dict}")
         
         if not isinstance(time_range_dict, dict) or "from" not in time_range_dict or "to" not in time_range_dict:
             raise HTTPException(
@@ -183,7 +229,7 @@ async def generate_report_from_panels(
         
         panels_data = []
         
-        # Check if we have the new multi-dashboard format
+        # Parse dashboard selections
         if dashboards:
             try:
                 dashboard_list = json.loads(dashboards)
@@ -193,49 +239,61 @@ async def generate_report_from_panels(
                 dashboard_list = []
         else:
             dashboard_list = []
-            
-        # If we don't have the new format, use the old format for backward compatibility
+        
+        # Fallback to old format
         if not dashboard_list:
-            # Parse panel IDs from the old format
             try:
                 panel_id_list = json.loads(panel_ids)
                 if not isinstance(panel_id_list, list) or not panel_id_list:
                     raise HTTPException(
                         status_code=400,
-                        detail="panel_ids must be a non-empty array of panel IDs"
+                        detail="panel_ids must be a non-empty array"
                     )
             except:
                 raise HTTPException(
-                    status_code=400, 
+                    status_code=400,
                     detail="Invalid panel_ids format"
                 )
-                
+            
             dashboard_list = [{
                 "uid": dashboard_uid,
                 "panels": panel_id_list
             }]
-            
-        # Process each dashboard and its panels
+        
+        logger.info(f"Processing {len(dashboard_list)} dashboard(s)")
+        
+        # Fetch panel data
         for dashboard_data in dashboard_list:
-            dashboard_uid = dashboard_data.get("uid")
+            dash_uid = dashboard_data.get("uid")
             panel_id_list = dashboard_data.get("panels", [])
             
-            if not dashboard_uid or not panel_id_list:
-                continue  # Skip this dashboard if it has no uid or panels
-                
-            # Fetch data for each panel in this dashboard
+            logger.info(f"Dashboard {dash_uid}: {len(panel_id_list)} panels")
+            
+            if not dash_uid or not panel_id_list:
+                continue
+            
             for panel_id in panel_id_list:
                 try:
+                    logger.info(f"  Fetching panel {panel_id}...")
                     panel_data = grafana_service.get_panel_data(
-                        dashboard_uid, 
-                        int(panel_id),  # Ensure panel_id is an integer
+                        dash_uid,
+                        int(panel_id),
                         time_range_dict
                     )
+                    
+                    # Check if we got data
+                    rows_count = len(panel_data.get('rows', []))
+                    logger.info(f"  Panel {panel_id}: {rows_count} rows")
+                    
+                    if rows_count == 0:
+                        logger.warning(f"  ⚠️  Panel {panel_id} returned no data!")
+                    
                     panels_data.append(panel_data)
+                    
                 except Exception as panel_error:
-                    # Log the error
-                    print(f"Error fetching panel {panel_id} from dashboard {dashboard_uid}: {str(panel_error)}")
-                    # Add an error panel to the report
+                    logger.error(f"  ❌ Error fetching panel {panel_id}: {panel_error}")
+                    logger.error(traceback.format_exc())
+                    # Add error panel
                     error_panel = {
                         "fields": ["Error"],
                         "rows": [[f"Failed to fetch data: {str(panel_error)}"]],
@@ -243,23 +301,30 @@ async def generate_report_from_panels(
                             "id": panel_id,
                             "title": f"Panel {panel_id} (Error)",
                             "type": "unknown",
-                            "description": "Error fetching panel data"
+                            "description": str(panel_error)
                         }
                     }
                     panels_data.append(error_panel)
         
-        # Check if we have any panels with data
         if not panels_data:
             raise HTTPException(
                 status_code=500,
-                detail="Failed to fetch data for any of the selected panels"
+                detail="Failed to fetch data for any panels"
             )
         
-        # Generate timestamp for filename
+        # Check total rows
+        total_rows = sum(len(pd.get('rows', [])) for pd in panels_data)
+        logger.info(f"Total data rows across all panels: {total_rows}")
+        
+        if total_rows == 0:
+            logger.warning("⚠️  NO DATA IN ANY PANELS!")
+        
+        # Generate report
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{report_title.replace(' ', '_')}_{timestamp}"
         
-        # Generate the XLSX report with multiple sheets
+        logger.info(f"Generating Excel file: {filename}")
+        
         file_path = report_service.generate_xlsx_from_panels(
             panels_data,
             filename,
@@ -269,33 +334,37 @@ async def generate_report_from_panels(
             company_name
         )
         
-        # Return file for download
+        logger.info(f"✅ Report generated: {file_path}")
+        logger.info(f"File size: {os.path.getsize(file_path)} bytes")
+        
         return FileResponse(
             path=file_path,
             filename=os.path.basename(file_path),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        # Log the full error details
-        import traceback
-        print(f"Error generating report: {str(e)}")
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Failed to generate report: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
 @router.get("/panel-data", response_class=JSONResponse)
 async def get_panel_data(dashboard_uid: str, panel_id: int, from_time: str = "now-24h", to_time: str = "now"):
     """Get data for a specific panel"""
     try:
-        # Create time range
+        logger.info(f"Fetching data for panel {panel_id} in dashboard {dashboard_uid}")
+        
         time_range = {
             "from": from_time,
             "to": to_time
         }
         
-        # Fetch panel data
         panel_data = grafana_service.get_panel_data(dashboard_uid, panel_id, time_range)
         
-        # Return panel data
+        logger.info(f"Panel data: {len(panel_data.get('rows', []))} rows")
+        
         return {
             "panel_info": panel_data.get("panel", {}),
             "fields": panel_data.get("fields", []),
@@ -304,11 +373,9 @@ async def get_panel_data(dashboard_uid: str, panel_id: int, from_time: str = "no
             "time_range": time_range
         }
     except Exception as e:
-        # Log the full error details
-        import traceback
-        print(f"Error getting panel data: {str(e)}")
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting panel data: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to get panel data: {str(e)}")
 
 @router.get("/panel-test", response_class=HTMLResponse)
 async def panel_test(request: Request):
@@ -325,6 +392,8 @@ async def get_dashboards_list():
         dashboards = grafana_service.get_dashboards()
         return {"dashboards": dashboards}
     except Exception as e:
+        logger.error(f"Error getting dashboards list: {e}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/dashboard-panels", response_class=JSONResponse)
@@ -334,4 +403,6 @@ async def get_dashboard_panels_list(dashboard_uid: str):
         panels = grafana_service.get_dashboard_panels(dashboard_uid)
         return {"panels": panels}
     except Exception as e:
+        logger.error(f"Error getting dashboard panels: {e}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
